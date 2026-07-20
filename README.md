@@ -64,5 +64,6 @@ cd src
 mojo build main.mojo -o liquid_demo -O3
 ./liquid_demo
 ```
-## credits  
+##credits
 MEEE cuz u know i made it muheheheheheh
++no llm was used+
