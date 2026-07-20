@@ -1,0 +1,86 @@
+#oh seuss why you die 
+#EIN ZWEI POLIZEI
+
+from liquid_state import TILE_WIDTH
+
+alias Vec = SIMD[DType.float32, TILE_WIDTH]
+
+comptime ERROR_TOLERANCE: Float32 = 1e-4
+comptime MIN_STEP: Float32 = 1e-4
+comptime MAX_STEP: Float32 = 0.25
+comptime STEP_GROWTH: Float32 = 1.5
+comptime STEP_SHRINK: Float32 = 0.5
+comptime MAX_SUBSTEPS = 8 
+
+
+def ltc_derivative(x: Vec, tau: Vec, a_bias: Vec, synaptic_drive: Vec) -> Vec:
+    """dx/dt for the frozen-input LTC ODE, fully vectorized."""
+    var inv_tau = Vec(1.0) / tau
+    var leak_rate = inv_tau + synaptic_drive
+    return synaptic_drive * a_bias - x * leak_rate
+
+
+def rk4_step(x: Vec, tau: Vec, a_bias: Vec, synaptic_drive: Vec, h: Vec) -> Vec:
+    """One classical fourth-order Runge-Kutta step, vectorized over the tile."""
+    var k1 = ltc_derivative(x, tau, a_bias, synaptic_drive)
+    var k2 = ltc_derivative(x + h * 0.5 * k1, tau, a_bias, synaptic_drive)
+    var k3 = ltc_derivative(x + h * 0.5 * k2, tau, a_bias, synaptic_drive)
+    var k4 = ltc_derivative(x + h * k3, tau, a_bias, synaptic_drive)
+    return x + (h / 6.0) * (k1 + Vec(2.0) * k2 + Vec(2.0) * k3 + k4)
+
+
+struct AdaptiveResult:
+    var x_next: Vec
+    var h_used: Vec        
+    var h_suggested: Vec  
+    var max_error: Float32
+
+
+def integrate_tile_adaptive(x0: Vec, tau: Vec, a_bias: Vec,
+                             synaptic_drive: Vec, h_init: Vec,
+                             dt_remaining: Float32) -> AdaptiveResult:
+    
+    var t_left = dt_remaining
+    var x = x0
+    var h_scalar: Float32 = h_init[0]
+    var worst_error: Float32 = 0.0
+    var substeps = 0
+
+    while t_left > 1e-6 and substeps < MAX_SUBSTEPS:
+        if h_scalar > t_left:
+            h_scalar = t_left
+        var h = Vec(h_scalar)
+
+        var full_step = rk4_step(x, tau, a_bias, synaptic_drive, h)
+
+        var half = Vec(h_scalar * 0.5)
+        var mid = rk4_step(x, tau, a_bias, synaptic_drive, half)
+        var two_half_steps = rk4_step(mid, tau, a_bias, synaptic_drive, half)
+
+        var diff = two_half_steps - full_step
+        var err_vec = diff.__abs__() / 15.0
+        var tile_error = err_vec.reduce_max()
+
+        if tile_error > ERROR_TOLERANCE and h_scalar > MIN_STEP:
+            
+            h_scalar = max(h_scalar * STEP_SHRINK, MIN_STEP)
+            substeps += 1
+            continue
+
+       
+        x = two_half_steps + diff / 15.0
+        t_left -= h_scalar
+        if tile_error > worst_error:
+            worst_error = tile_error
+
+        if tile_error < ERROR_TOLERANCE * 0.1:
+            h_scalar = min(h_scalar * STEP_GROWTH, MAX_STEP)
+
+        substeps += 1
+
+    var result: AdaptiveResult
+    result.x_next = x
+    result.h_used = Vec(h_scalar)
+    result.h_suggested = Vec(h_scalar)
+    result.max_error = worst_error
+    return result
