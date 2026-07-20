@@ -1,75 +1,52 @@
-from memory import UnsafePointer, alloc, memset_zero
+from time import perf_counter_ns
+from math import sin
+from memory import UnsafePointer, alloc
+
+from liquid_network import LiquidNetwork
 
 
-comptime CACHE_LINE_BYTES = 64
-comptime TILE_WIDTH = CACHE_LINE_BYTES // 4  
-comptime SIMD_WIDTH = 8                     
+def synthetic_sensor_sample(t: Float32, buf: UnsafePointer[Float32, MutUntrackedOrigin]):
+    buf[0] = sin(t * 2.0)                       
+    buf[1] = sin(t * 2.0 + 1.0) * 0.5
+    buf[2] = sin(t * 30.0) * 0.05               
+    if t > 2.0 and t < 2.05:
+        buf[3] = 5.0                            
+    else:
+        buf[3] = 0.0
 
 
-def round_up_to_tile(n: Int) -> Int:
-   
-    var rem = n % TILE_WIDTH
-    if rem == 0:
-        return n
-    return n + (TILE_WIDTH - rem)
+def main():
+    comptime INPUT_DIM = 4
+    var layer_sizes = List[Int]()
+    layer_sizes.append(128)
+    layer_sizes.append(64)
+    layer_sizes.append(16)
 
+    var net = LiquidNetwork(INPUT_DIM, layer_sizes, tau=0.5)
 
-struct LiquidState:
-    
-    var num_units: Int
-    var capacity: Int
-    var num_tiles: Int
+    var input_buf = alloc[Float32](INPUT_DIM)
 
-   
-    var x: UnsafePointer[Float32, MutUntrackedOrigin]
-  
-    var tau: UnsafePointer[Float32, MutUntrackedOrigin]
-    
-    var a_bias: UnsafePointer[Float32, MutUntrackedOrigin]
- 
-    var step_h: UnsafePointer[Float32, MutUntrackedOrigin]  
-    
-    var last_error: UnsafePointer[Float32, MutUntrackedOrigin]
+    comptime NUM_STEPS = 2000
+    comptime DT: Float32 = 0.01
 
-    def __init__(out self, num_units: Int, default_tau: Float32 = 1.0,
-                 default_step: Float32 = 0.05):
-        self.num_units = num_units
-        self.capacity = round_up_to_tile(num_units)
-        self.num_tiles = self.capacity // TILE_WIDTH
+    var start = perf_counter_ns()
 
-        self.x = alloc[Float32](self.capacity)
-        self.tau = alloc[Float32](self.capacity)
-        self.a_bias = alloc[Float32](self.capacity)
-        self.step_h = alloc[Float32](self.num_tiles)
-        self.last_error = alloc[Float32](self.num_tiles)
+    var t: Float32 = 0.0
+    for step in range(NUM_STEPS):
+        synthetic_sensor_sample(t, input_buf)
+        net.step(input_buf, DT, num_workers=4)
+        t += DT
 
-        memset_zero(self.x, self.capacity)
-        memset_zero(self.a_bias, self.capacity)
+    var elapsed_ns = perf_counter_ns() - start
+    var elapsed_ms = Float64(elapsed_ns) / 1_000_000.0
 
-        for i in range(self.capacity):
-            self.tau[i] = default_tau
-        for t in range(self.num_tiles):
-            self.step_h[t] = default_step
-            self.last_error[t] = 0.0
+    print("Ran", NUM_STEPS, "timesteps of a", 4, "->128->64->16 liquid network")
+    print("Total time:", elapsed_ms, "ms  (",
+          elapsed_ms / Float64(NUM_STEPS), "ms/step )")
 
-    def __del__(deinit self):
-        self.x.free()
-        self.tau.free()
-        self.a_bias.free()
-        self.step_h.free()
-        self.last_error.free()
+    var out_ptr = net.final_output_ptr()
+    print("Final output layer (16 units):")
+    for i in range(16):
+        print("  unit", i, "=", out_ptr[i])
 
-    def tile_offset(self, tile_index: Int) -> Int:
-        return tile_index * TILE_WIDTH
-
-    def load_x(self, tile_index: Int) -> SIMD[DType.float32, TILE_WIDTH]:
-        return self.x.load[width=TILE_WIDTH](self.tile_offset(tile_index))
-
-    def store_x(mut self, tile_index: Int, v: SIMD[DType.float32, TILE_WIDTH]):
-        self.x.store[width=TILE_WIDTH](self.tile_offset(tile_index), v)
-
-    def load_tau(self, tile_index: Int) -> SIMD[DType.float32, TILE_WIDTH]:
-        return self.tau.load[width=TILE_WIDTH](self.tile_offset(tile_index))
-
-    def load_a_bias(self, tile_index: Int) -> SIMD[DType.float32, TILE_WIDTH]:
-        return self.a_bias.load[width=TILE_WIDTH](self.tile_offset(tile_index))
+    input_buf.free()
