@@ -1,0 +1,139 @@
+#mojo more like offbrand python
+#anyways gon write in it 
+#RAWRRRRR
+from algorithm import parallelize
+from memory import UnsafePointer, alloc
+from math import exp
+
+from liquid_state import LiquidState, TILE_WIDTH, round_up_to_tile
+from liquid_ode import integrate_tile_adaptive, Vec
+
+
+def sigmoid(v: Vec) -> Vec:
+    return Vec(1.0) / (Vec(1.0) + exp(-v))
+
+
+struct LiquidCell:
+   
+
+    var input_dim: Int
+    var num_units: Int
+    var capacity: Int
+    var num_tiles: Int
+
+    var state: LiquidState
+    var next_x: UnsafePointer[Float32, MutUntrackedOrigin]
+
+   
+    var w_in: UnsafePointer[Float32, MutUntrackedOrigin]  
+    var w_rec: UnsafePointer[Float32, MutUntrackedOrigin]  
+    var bias: UnsafePointer[Float32, MutUntrackedOrigin]   # c
+
+    def __init__(out self, input_dim: Int, num_units: Int, tau: Float32 = 1.0):
+        self.input_dim = input_dim
+        self.num_units = num_units
+        self.state = LiquidState(num_units, tau)
+        self.capacity = self.state.capacity
+        self.num_tiles = self.state.num_tiles
+
+        self.next_x = alloc[Float32](self.capacity)
+
+        self.w_in = alloc[Float32](self.capacity * input_dim)
+        self.w_rec = alloc[Float32](self.capacity * self.capacity)
+        self.bias = alloc[Float32](self.capacity)
+
+        self._init_weights()
+
+    def _init_weights(mut self):
+       
+        var seed: UInt32 = 0x9E3779B9
+        for i in range(self.capacity * self.input_dim):
+            seed = seed * 1664525 + 1013904223
+            self.w_in[i] = (Float32((seed >> 8) & 0xFFFF) / 32768.0 - 1.0) * 0.5
+        for i in range(self.capacity * self.capacity):
+            seed = seed * 1664525 + 1013904223
+            self.w_rec[i] = (Float32((seed >> 8) & 0xFFFF) / 32768.0 - 1.0) * 0.2
+        for i in range(self.capacity):
+            self.bias[i] = 0.0
+            self.state.a_bias[i] = 1.0  
+    def __del__(deinit self):
+        self.next_x.free()
+        self.w_in.free()
+        self.w_rec.free()
+        self.bias.free()
+
+    def _tile_synaptic_drive(self, tile_index: Int,
+                              input_ptr: UnsafePointer[Float32, MutUntrackedOrigin]) -> Vec:
+        
+        var acc = Vec(0.0)
+        var row_base = tile_index * TILE_WIDTH
+
+        for lane in range(TILE_WIDTH):
+            var row = row_base + lane
+            var s: Float32 = self.bias[row]
+
+            var in_row_base = row * self.input_dim
+            for j in range(self.input_dim):
+                s += self.w_in[in_row_base + j] * input_ptr[j]
+
+            var rec_row_base = row * self.capacity
+            for j in range(self.capacity):
+                s += self.w_rec[rec_row_base + j] * self.state.x[j]
+
+            acc[lane] = s
+
+        return sigmoid(acc)
+
+    def _step_tile(self, tile_index: Int,
+                    input_ptr: UnsafePointer[Float32, MutUntrackedOrigin],
+                    dt: Float32):
+        var drive = self._tile_synaptic_drive(tile_index, input_ptr)
+        var x_prev = self.state.load_x(tile_index)
+        var tau = self.state.load_tau(tile_index)
+        var a_bias = self.state.load_a_bias(tile_index)
+        var h_init = Vec(self.state.step_h[tile_index])
+
+        var result = integrate_tile_adaptive(x_prev, tau, a_bias, drive, h_init, dt)
+
+        result.x_next.store(self.next_x, tile_index * TILE_WIDTH)
+        self.state.step_h[tile_index] = result.h_suggested[0]
+        self.state.last_error[tile_index] = result.max_error
+
+    def step(mut self, input_ptr: UnsafePointer[Float32, MutUntrackedOrigin],
+              dt: Float32, num_workers: Int = 4):
+        
+        def _worker(tile_index: Int):
+            self._step_tile(tile_index, input_ptr, dt)
+
+        parallelize[_worker](self.num_tiles, num_workers)
+
+        
+        for i in range(self.capacity):
+            self.state.x[i] = self.next_x[i]
+
+    def output_ptr(self) -> UnsafePointer[Float32, MutUntrackedOrigin]:
+        return self.state.x
+
+
+struct LiquidNetwork:
+  
+    var num_layers: Int
+    var layers: List[LiquidCell]
+
+    def __init__(out self, input_dim: Int, layer_sizes: List[Int], tau: Float32 = 1.0):
+        self.num_layers = len(layer_sizes)
+        self.layers = List[LiquidCell]()
+        var prev_dim = input_dim
+        for i in range(self.num_layers):
+            self.layers.append(LiquidCell(prev_dim, layer_sizes[i], tau))
+            prev_dim = layer_sizes[i]
+
+    def step(mut self, input_ptr: UnsafePointer[Float32, MutUntrackedOrigin],
+             dt: Float32, num_workers: Int = 4):
+        var cur_input = input_ptr
+        for i in range(self.num_layers):
+            self.layers[i].step(cur_input, dt, num_workers)
+            cur_input = self.layers[i].output_ptr()
+
+    def final_output_ptr(self) -> UnsafePointer[Float32, MutUntrackedOrigin]:
+        return self.layers[self.num_layers - 1].output_ptr()
