@@ -1,0 +1,75 @@
+from memory import UnsafePointer, alloc, memset_zero
+
+
+comptime CACHE_LINE_BYTES = 64
+comptime TILE_WIDTH = CACHE_LINE_BYTES // 4  
+comptime SIMD_WIDTH = 8                     
+
+
+def round_up_to_tile(n: Int) -> Int:
+   
+    var rem = n % TILE_WIDTH
+    if rem == 0:
+        return n
+    return n + (TILE_WIDTH - rem)
+
+
+struct LiquidState:
+    
+    var num_units: Int
+    var capacity: Int
+    var num_tiles: Int
+
+   
+    var x: UnsafePointer[Float32, MutUntrackedOrigin]
+  
+    var tau: UnsafePointer[Float32, MutUntrackedOrigin]
+    
+    var a_bias: UnsafePointer[Float32, MutUntrackedOrigin]
+ 
+    var step_h: UnsafePointer[Float32, MutUntrackedOrigin]  
+    
+    var last_error: UnsafePointer[Float32, MutUntrackedOrigin]
+
+    def __init__(out self, num_units: Int, default_tau: Float32 = 1.0,
+                 default_step: Float32 = 0.05):
+        self.num_units = num_units
+        self.capacity = round_up_to_tile(num_units)
+        self.num_tiles = self.capacity // TILE_WIDTH
+
+        self.x = alloc[Float32](self.capacity)
+        self.tau = alloc[Float32](self.capacity)
+        self.a_bias = alloc[Float32](self.capacity)
+        self.step_h = alloc[Float32](self.num_tiles)
+        self.last_error = alloc[Float32](self.num_tiles)
+
+        memset_zero(self.x, self.capacity)
+        memset_zero(self.a_bias, self.capacity)
+
+        for i in range(self.capacity):
+            self.tau[i] = default_tau
+        for t in range(self.num_tiles):
+            self.step_h[t] = default_step
+            self.last_error[t] = 0.0
+
+    def __del__(deinit self):
+        self.x.free()
+        self.tau.free()
+        self.a_bias.free()
+        self.step_h.free()
+        self.last_error.free()
+
+    def tile_offset(self, tile_index: Int) -> Int:
+        return tile_index * TILE_WIDTH
+
+    def load_x(self, tile_index: Int) -> SIMD[DType.float32, TILE_WIDTH]:
+        return self.x.load[width=TILE_WIDTH](self.tile_offset(tile_index))
+
+    def store_x(mut self, tile_index: Int, v: SIMD[DType.float32, TILE_WIDTH]):
+        self.x.store[width=TILE_WIDTH](self.tile_offset(tile_index), v)
+
+    def load_tau(self, tile_index: Int) -> SIMD[DType.float32, TILE_WIDTH]:
+        return self.tau.load[width=TILE_WIDTH](self.tile_offset(tile_index))
+
+    def load_a_bias(self, tile_index: Int) -> SIMD[DType.float32, TILE_WIDTH]:
+        return self.a_bias.load[width=TILE_WIDTH](self.tile_offset(tile_index))
