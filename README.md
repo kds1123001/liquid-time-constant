@@ -5,7 +5,7 @@ A from-scratch Liquid Neural Network (LTC-style, MIT CSAIL formulation) with:
 1. a SIMD-vectorized, adaptive-step RK4 ODE solver (`src/liquid_ode.mojo`)
 2. a Struct-of-Arrays, cache-tiled state/weight layout (`src/liquid_state.mojo`)
 3. a lock-free parallel timestep executor using double-buffered state (`src/liquid_network.mojo`)
-
+ 
 No PyTorch/TensorFlow. No dynamic allocation inside the inference loop.
 
 ## A note on Mojo's API churn — read this before you build
