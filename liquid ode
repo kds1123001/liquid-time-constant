@@ -14,14 +14,14 @@ comptime MAX_SUBSTEPS = 8
 
 
 def ltc_derivative(x: Vec, tau: Vec, a_bias: Vec, synaptic_drive: Vec) -> Vec:
-    """dx/dt for the frozen-input LTC ODE, fully vectorized."""
+   
     var inv_tau = Vec(1.0) / tau
     var leak_rate = inv_tau + synaptic_drive
     return synaptic_drive * a_bias - x * leak_rate
 
 
 def rk4_step(x: Vec, tau: Vec, a_bias: Vec, synaptic_drive: Vec, h: Vec) -> Vec:
-    """One classical fourth-order Runge-Kutta step, vectorized over the tile."""
+    
     var k1 = ltc_derivative(x, tau, a_bias, synaptic_drive)
     var k2 = ltc_derivative(x + h * 0.5 * k1, tau, a_bias, synaptic_drive)
     var k3 = ltc_derivative(x + h * 0.5 * k2, tau, a_bias, synaptic_drive)
