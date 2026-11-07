@@ -45,10 +45,32 @@ Numbers from my machine: about 30 microseconds per timestep for 128 units on CPU
 
 ## Mojo version notes
 
-Mojo's syntax has changed a lot, and older tutorials will not compile. This code uses [version]. The two places I had to adjust:
+Mojo's syntax has changed a lot, and older tutorials will not compile. The two places I had to adjust:
 
 - `UnsafePointer` origin parameter.
 - The `parallelize` call in `src/liquid_network.mojo`.
+
+## Status and known problems
+
+This is a learning project. Please don't rely on it for anything where a
+wrong answer could hurt someone or break something.
+
+What I can't promise:
+
+- It may not build on your Mojo version. Mojo's syntax changes often, and
+  I have only tried it on my version.
+- There are no tests in this repo. I have not checked the output against
+  a reference LTC implementation, so the numbers may be wrong.
+- There are no proper benchmarks. Any timing the demo prints is rough and
+  comes from one machine.
+- I have not tested it on a robot or embedded board, despite the
+  "edge robotics" in the title. That is the goal, not something I've shown.
+- I have not measured whether the parallel version is faster than a
+  single thread at 128 units. At this size it might be slower.
+- It only runs the network forward. There is no training code.
+
+If something breaks for you, please open an issue and include your Mojo
+version and the error message.
 
 ## Credits
 
