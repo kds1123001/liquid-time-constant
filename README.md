@@ -54,6 +54,9 @@ cd src
 mojo build main.mojo -o liquid_demo -O3
 ./liquid_demo
 ```
+this was compiled on mojo i dont really have access to robotics hardware yet.
 ##credits
+
+
 MEEE cuz u know i made it muheheheheheh
 +no llm was used+
