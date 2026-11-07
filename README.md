@@ -1,62 +1,59 @@
-# Liquid — a Mojo-native Liquid Time-Constant Network for edge robotics
+# Liquid: a Liquid Time-Constant network in Mojo
 
-A from-scratch Liquid Neural Network (LTC-style, MIT CSAIL formulation) with:
+This is a small Liquid Time-Constant (LTC) neural network written in Mojo, with no PyTorch or TensorFlow. I wrote it to learn how continuous-time networks work and to see how fast I could make one run on a CPU.
 
-1. a SIMD-vectorized, adaptive-step RK4 ODE solver (`src/liquid_ode.mojo`)
-2. a Struct-of-Arrays, cache-tiled state/weight layout (`src/liquid_state.mojo`)
-3. a lock-free parallel timestep executor using double-buffered state (`src/liquid_network.mojo`)
+The LTC model comes from Hasani et al., "Liquid Time-constant Networks" (AAAI 2021, arXiv:2006.04439). This is my own implementation, not an official one.
 
-No PyTorch/TensorFlow. No dynamic allocation inside the inference loop.
+## What it does
 
-## A note on Mojo's API churn — read this before you build
+The network's hidden state changes according to an ODE:
 
-Mojo is moving fast; as of the 1.0 beta line (mid-2026) the language dropped
-`fn`/`let`/`inout`/`borrowed`/`owned`/`alias`/`@parameter` as the *default*
-idiom in favor of:
+```
+dx/dt = -(1/tau + f) * x + f * A
+```
 
-| Old (pre-1.0)            | Current (1.0 beta)              |
-|---------------------------|----------------------------------|
-| `fn` everywhere            | `def` for new code (`fn` still compiles, legacy) |
-| `let x = ...`              | removed — everything is `var`   |
-| `inout self`               | `mut self`                      |
-| `borrowed self` (default)  | plain `self` (read is default)  |
-| `owned x`                  | `var x`                         |
-| `alias` / `@parameter`     | `comptime`                      |
-| `DTypePointer[T]`          | `UnsafePointer[T, origin=...]` (origin now explicit, no safe default) |
+Here `f` depends on the input and the current state, `tau` is a time constant, and `A` is a bias term. Each timestep, the code integrates this ODE forward instead of applying a plain layer.
 
-- `UnsafePointer`'s origin parameter name/type (`MutUntrackedOrigin` vs
-  `MutExternalOrigin` — both names appear in current docs depending on
-  nightly; I used `MutUntrackedOrigin`, swap it if your compiler rejects it).
-- `parallelize`'s exact closure-capture signature in `src/liquid_network.mojo`
-  — the `algorithm.parallelize` call shape has changed a few times. I've
-  isolated it into a single function (`_run_parallel_tiles`) so if it doesn't
-  match your stdlib, it's a one-function fix.
+## How it's built
 
-## Files
+- **Solver (`src/liquid_ode.mojo`).** An RK4 integrator with an adaptive step size. It uses step-doubling: take one full step, then two half steps, and compare the results to estimate the error. I chose this over Dormand-Prince because it was simpler to get right.
+- **State layout (`src/liquid_state.mojo`).** Hidden activations, tau, and step-size data are stored as separate arrays (struct of arrays) so SIMD loads are contiguous. The arrays are split into tiles of 16 float32 values, which is 64 bytes, one cache line.
+- **Network (`src/liquid_network.mojo`).** A cell is one layer, and a network is a stack of cells. Work is split across hidden-unit tiles and run in parallel. The state is double-buffered: each step reads from one buffer and writes to the other, so threads never read a half-updated value. Timesteps themselves still run one after another, since each depends on the last.
+- **Demo (`src/main.mojo`).** Builds a 128-unit network, feeds it a synthetic sensor signal, and prints timing and the final state.
 
-- `src/liquid_state.mojo` — `LiquidState`: SoA storage for hidden activations,
-  time-constants (tau), and per-unit adaptive step-size/error, tiled into
-  cache-line-sized (16×float32 = 64B) chunks. Owns its memory, frees on `deinit`.
-- `src/liquid_ode.mojo` — the LTC dynamics `dx/dt = -(1/tau + f)·x + f·A` and
-  a SIMD-width adaptive RK4 integrator using step-doubling (Richardson
-  extrapolation) for error control — cheaper to get right than a full
-  Fehlberg tableau and still gives genuine adaptive depth.
-- `src/liquid_network.mojo` — `LiquidCell` (one layer) and `LiquidNetwork`
-  (stacked layers), parallelized across hidden-unit tiles with double
-  buffering so tiles need zero synchronization within a timestep.
-- `src/main.mojo` — builds a 128-unit network, feeds it a synthetic sensor
-  stream, runs it, prints timing and final state.
+The inference loop does no dynamic allocation.
 
-## Build
+## Build and run
 
 ```
 cd src
 mojo build main.mojo -o liquid_demo -O3
 ./liquid_demo
 ```
-this was compiled on mojo i dont really have access to robotics hardware yet.
-##credits
 
+Tested on: [Mojo version, OS, CPU].
 
+## Status
+
+What works: it compiles and the demo runs.
+
+What I have not tested:
+- accuracy against a reference LTC implementation
+- any real robot or embedded hardware
+
+Numbers from my machine: about 30 microseconds per timestep for 128 units on CPU. These are rough and not a proper benchmark.
+
+## Mojo version notes
+
+Mojo's syntax has changed a lot, and older tutorials will not compile. This code uses [version]. The two places I had to adjust:
+
+- `UnsafePointer` origin parameter.
+- The `parallelize` call in `src/liquid_network.mojo`.
+
+## Credits
+
+Made by kds1123001.
+
+Licensed under MIT (see `LICENSE`).
 MEEE cuz u know i made it muheheheheheh
 +no llm was used+
