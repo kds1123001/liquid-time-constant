@@ -31,8 +31,6 @@ mojo build main.mojo -o liquid_demo -O3
 ./liquid_demo
 ```
 
-Tested on: [Mojo version, OS, CPU].
-
 ## Status
 
 What works: it compiles and the demo runs.
