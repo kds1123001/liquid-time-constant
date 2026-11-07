@@ -24,13 +24,6 @@ idiom in favor of:
 | `alias` / `@parameter`     | `comptime`                      |
 | `DTypePointer[T]`          | `UnsafePointer[T, origin=...]` (origin now explicit, no safe default) |
 
-This code is written against the **current** conventions. Because I don't have
-a Mojo toolchain available in this environment to compile against (network
-access here is restricted to package registries, not `modular.com`), I
-haven't been able to run `mojo build` on this myself — treat it as a careful,
-idiomatic first draft rather than a compiled artifact. The two spots most
-likely to need a one-line adjustment for your exact nightly are:
-
 - `UnsafePointer`'s origin parameter name/type (`MutUntrackedOrigin` vs
   `MutExternalOrigin` — both names appear in current docs depending on
   nightly; I used `MutUntrackedOrigin`, swap it if your compiler rejects it).
@@ -38,9 +31,6 @@ likely to need a one-line adjustment for your exact nightly are:
   — the `algorithm.parallelize` call shape has changed a few times. I've
   isolated it into a single function (`_run_parallel_tiles`) so if it doesn't
   match your stdlib, it's a one-function fix.
-
-If you hit a compile error, paste it back to me and I'll patch it — that's a
-much tighter loop than me guessing at a moving target from here.
 
 ## Files
 
